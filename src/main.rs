@@ -1,4 +1,4 @@
-use std::vec;
+use std::io::{self, Write};
 
 type Grid = Vec<Vec<bool>>; 
 pub struct Field {
@@ -86,7 +86,7 @@ impl Block {
         };
         let shape = Block::generate_rotations(shape_0_1);
         Self {
-            coord: (0, 0),
+            coord: (1, 0),
             rotate: 0,
             shape,
         }
@@ -130,8 +130,16 @@ impl Block {
 
 impl Field {
     pub fn new(width: usize, height: usize) -> Self {
+        let mut field = vec![vec![false; width + 2]; height + 1];
+        for x in 0..width + 2 {
+            field[height][x] = true;
+        }
+        for y in 0..height {
+            field[y][0] = true;
+            field[y][width + 1] = true;
+        }
         Self {
-            field: vec![vec![false; width]; height],
+            field,
         }
     }
 
@@ -139,8 +147,8 @@ impl Field {
         self.field = field;
     }
 
-    fn arrange_with_block(field: &Grid, block: &Block) -> Option<Grid> {
-        let mut output = field.clone();
+    fn arrange_with_block(&self, block: &Block) -> Option<Grid> {
+        let mut output = self.field.clone();
         let cols_block = block.shape[0].len();
         let rows_block = block.shape[0][0].len();
         for y in 0..cols_block {
@@ -150,14 +158,13 @@ impl Field {
                 if *elem && block_elem {
                     return None;
                 }
-                *elem = block_elem;
+                *elem |= block_elem;
             }
         }
         Some(output)
     }
 
     fn format_field(field: &Grid) -> String {
-        let rows = field[0].len();
         let field_fmt = field.iter().map(|w_vec| {
             let inside = w_vec.iter().map(|elem| {
                 if *elem {
@@ -166,24 +173,92 @@ impl Field {
                     ". "
                 }
             }).collect::<String>();
-            format!("[]{}[]\n", &inside)
+            format!("{}\n", &inside)
         }).collect::<String>();
-        format!("{}{}\n", field_fmt, "[]".repeat(rows + 2))
+        field_fmt
     }
 }
 
-struct Game {
+enum Operation{
+    Right,
+    Left,
+    Down,
+    LRot,
+    RRot,
+}
+
+pub struct Game {
     field: Field,
-    block: Block,
+    block: Option<Block>,
 }
 
 impl Game {
+    pub fn new(width: usize, height: usize) -> Self {
+        Self {
+            field: Field::new(width, height),
+            block: None,
+        }
+    }
 
+    pub fn new_block(&mut self) {
+        
+    }
+
+    fn parse(input: Option<char>) -> Option<Operation> {
+        let key = input?;
+        let op = match key {
+            'a' => Some(Operation::Left),
+            'd' => Some(Operation::Right),
+            's' => Some(Operation::Down),
+            'q' => Some(Operation::LRot),
+            'e' => Some(Operation::RRot),
+            _ => None,
+        };
+        op
+    }
+
+    fn operate(block: &mut Block, operation: Operation) {
+        use Operation::*;
+        //if let Some(ref mut block) = self.block {
+            match operation {
+                Left => block.left(),
+                Right => block.right(),
+                Down => block.down(),
+                LRot => block.rotate_left(),
+                RRot => block.rotate_right(),
+            };
+        //}
+    }
+
+    pub fn step(&mut self, input: Option<char>) {
+        if let Some(ref mut block) = self.block {
+            let operation = Self::parse(input);
+            if let Some(op) = operation {
+                let prev_coord = block.coord.clone();
+                Game::operate(block, op);
+                if let Some(field_with_block) = self.field.arrange_with_block(&block) {
+                    let formatted = Field::format_field(&field_with_block);
+                    Game::render(formatted);
+                } else {
+                    block.coord = prev_coord;
+                }
+            }
+        }
+    }
+
+    fn render(formatted: String) {
+        // 画面をクリア
+        print!("{esc}c", esc = 27 as char);
+        // フォーマットされたフィールドを出力
+        print!("{}", formatted);
+        // 標準出力をフラッシュ
+        io::stdout().flush().unwrap();
+    }
 }
 
 
 pub fn show_with_block(field: &Field, block: &Block) {
-    let rendered = Field::arrange_with_block(&field.field, &block);
+    let rendered = field.arrange_with_block(&block);
     let formatted = Field::format_field(rendered.as_ref().unwrap());
     println!("{}", formatted);
 }
@@ -206,20 +281,16 @@ fn render() {
     let mut grid = field.field.clone();
     grid[2][4] = true;
     field.set(grid);
-    show(&field);
-    // ---- collision stdout ----
-    // []. . . . . []
-    // []. . . . . []
-    // []. . . . [][]
-    // []. . . . . []
-    // [][][][][][][]
-    assert_eq!(field.field, vec![
-        vec![false, false, false, false, false],
-        vec![false, false, false, false, false],
-        vec![false, false, false, false, true],
-        vec![false, false, false, false, false],
-        ]
-    )
+    let formatted = Field::format_field(&field.field);
+    assert_eq!(format!("\n{}", formatted),
+"
+[]. . . . . []
+[]. . . . . []
+[]. . . []. []
+[]. . . . . []
+[][][][][][][]
+"
+    );
 }
 
 #[test]
@@ -230,42 +301,35 @@ fn render_with_block() {
     grid[2][4] = true;
     let rendered = Field::arrange_with_block(&grid, &block);
     field.set(rendered.unwrap());
-    show(&field);
-    // ---- render_with_block stdout ----
-    // [][]. . . . []
-    // [][][][]. . []
-    // []. . . . [][]
-    // []. . . . . []
-    // [][][][][][][]
-    assert_eq!(field.field, vec![
-        vec![true, false, false, false, false],
-        vec![true, true, true, false, false],
-        vec![false, false, false, false, true],
-        vec![false, false, false, false, false],
-        ]
-    )
+    let formatted = Field::format_field(&field.field);
+    assert_eq!(format!("\n{}", formatted),
+"
+[][]. . . . []
+[][][][]. . []
+[]. . . []. []
+[]. . . . . []
+[][][][][][][]
+"
+    );
 }
 
 #[test]
 fn right() {
     let mut field = Field::new(5, 4);
-    let mut grid = field.field.clone();
-    let block = Block::new(BlockShape::J);
-    grid[2][4] = true;
-    let rendered = Field::arrange_with_block(&grid, &block);
+    let mut block = Block::new(BlockShape::J);
+    field.field[2][4] = true;
+    block.right();
+    let rendered = Field::arrange_with_block(&field.field, &block);
     field.set(rendered.unwrap());
-    show(&field);
-    // ---- render_with_block stdout ----
-    // [][]. . . . []
-    // [][][][]. . []
-    // []. . . . [][]
-    // []. . . . . []
-    // [][][][][][][]
-    assert_eq!(field.field, vec![
-        vec![true, false, false, false, false],
-        vec![true, true, true, false, false],
-        vec![false, false, false, false, true],
-        vec![false, false, false, false, false],
-        ]
-    )
+    let formatted = Field::format_field(&field.field);
+    println!("{}", formatted);
+    assert_eq!(format!("\n{}", formatted),
+"
+[]. []. . . []
+[]. [][][]. []
+[]. . . []. []
+[]. . . . . []
+[][][][][][][]
+"
+    );
 }
