@@ -1,3 +1,4 @@
+use crossterm::execute;
 use rand::{
     distributions::{Distribution, Standard},
     Rng,
@@ -5,10 +6,9 @@ use rand::{
 use std::{
     collections::VecDeque,
     io::{self, Write},
-    time::{Duration, Instant},
     thread,
+    time::{Duration, Instant},
 };
-use crossterm::execute;
 
 type Grid = Vec<Vec<bool>>;
 
@@ -229,10 +229,7 @@ impl Game {
 
     pub fn new_block(&mut self) {
         let shape: BlockShape = rand::random();
-        let coord_max = (
-            self.field.grid[0].len() as i8,
-            self.field.grid.len() as i8,
-        );
+        let coord_max = (self.field.grid[0].len() as i8, self.field.grid.len() as i8);
         self.block = Some(Block::new(shape, coord_max));
     }
 
@@ -316,7 +313,12 @@ impl Game {
     }
 
     fn render(formatted: String) {
-        execute!(io::stdout(), crossterm::terminal::Clear(crossterm::terminal::ClearType::All), crossterm::cursor::MoveTo(0, 0)).unwrap();
+        execute!(
+            io::stdout(),
+            crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
+            crossterm::cursor::MoveTo(0, 0)
+        )
+        .unwrap();
         print!("{}", formatted);
         io::stdout().flush().unwrap();
     }
@@ -351,7 +353,7 @@ fn main() -> io::Result<()> {
         game.update(input);
         thread::sleep(Duration::from_millis(16)); // Approx 60 FPS
     }
-    
+
     disable_raw_mode()?;
     Ok(())
 }
