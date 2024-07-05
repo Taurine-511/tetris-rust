@@ -1,4 +1,8 @@
-use std::io::{self, Write};
+use std::{collections::VecDeque, io::{self, Write}, time::Duration};
+use rand::{
+    distributions::{Distribution, Standard},
+    Rng,
+};
 
 type Grid = Vec<Vec<bool>>; 
 pub struct Field {
@@ -15,6 +19,21 @@ pub enum BlockShape {
     J,
     L,
     T,
+}
+
+impl Distribution<BlockShape> for Standard {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> BlockShape {
+        use BlockShape::*;
+        match rng.gen_range(0..7) {
+            0 => I,
+            1 => O,
+            2 => S,
+            3 => Z,
+            4 => J,
+            5 => L,
+            _ => T,
+        }
+    }
 }
 
 pub struct Block {
@@ -86,7 +105,7 @@ impl Block {
         };
         let shape = Block::generate_rotations(shape_0_1);
         Self {
-            coord: (1, 0),
+            coord: (4, 0),
             rotate: 0,
             shape,
         }
@@ -131,13 +150,12 @@ impl Block {
 impl Field {
     pub fn new(width: usize, height: usize) -> Self {
         let mut field = vec![vec![false; width + 2]; height + 1];
-        for x in 0..width + 2 {
-            field[height][x] = true;
-        }
+        field[height].fill(true);
         for y in 0..height {
             field[y][0] = true;
             field[y][width + 1] = true;
         }
+
         Self {
             field,
         }
@@ -147,13 +165,33 @@ impl Field {
         self.field = field;
     }
 
-    fn arrange_with_block(&self, block: &Block) -> Option<Grid> {
+    pub fn init_with_str(formatted: &str) -> Vec<Vec<bool>> {
+        formatted.lines().fold(Vec::new(), |mut v ,w_str| {
+            if w_str.len() != 0 {
+                v.push(
+                    w_str.chars()
+                        .collect::<Vec<char>>()
+                        .chunks(2)
+                        .map(|chunk| chunk == ['[', ']'])
+                        .collect::<Vec<bool>>()
+                )
+            }
+            v
+        })
+    }
+
+    pub fn arrange_with_block(&self, block: &Block) -> Option<Grid> {
         let mut output = self.field.clone();
         let cols_block = block.shape[0].len();
         let rows_block = block.shape[0][0].len();
         for y in 0..cols_block {
             for x in 0..rows_block {
-                let ref mut elem = output[block.coord.1 + y][block.coord.0 + x];
+                let y_check = block.coord.1 + y;
+                let x_check = block.coord.0 + x;
+                if y_check >= output.len() || x_check >= output[0].len() {
+                    continue;
+                }
+                let ref mut elem = output[y_check][x_check];
                 let block_elem = block.shape[block.rotate][y][x];
                 if *elem && block_elem {
                     return None;
@@ -164,14 +202,38 @@ impl Field {
         Some(output)
     }
 
+    pub fn update(&mut self) {
+        let mut queue: VecDeque<usize> = VecDeque::new();
+        let field_len = self.field.len() - 1;
+
+        for y in 0..field_len {
+            if self.is_row_full(y) {
+                queue.push_back(y);
+                self.clear_row(y);
+            } else if let Some(deleted) = queue.pop_front() {
+                self.field.swap(deleted, y);
+                queue.push_back(y);
+            }
+        }
+    }
+
+    fn is_row_full(&self, y: usize) -> bool {
+        self.field[y].iter().all(|&elem| elem)
+    }
+
+    fn clear_row(&mut self, y: usize) {
+        let row = &mut self.field[y];
+        let n = row.len();
+        row.fill(false);
+        row[0] = true;
+        row[n - 1] = true;
+    }
+
+
     fn format_field(field: &Grid) -> String {
         let field_fmt = field.iter().map(|w_vec| {
             let inside = w_vec.iter().map(|elem| {
-                if *elem {
-                   "[]"
-                } else {
-                    ". "
-                }
+                if *elem { "[]" } else { ". " }
             }).collect::<String>();
             format!("{}\n", &inside)
         }).collect::<String>();
@@ -201,7 +263,8 @@ impl Game {
     }
 
     pub fn new_block(&mut self) {
-        
+        let shape: BlockShape = rand::random();
+        self.block = Some(Block::new(shape));
     }
 
     fn parse(input: Option<char>) -> Option<Operation> {
@@ -219,15 +282,13 @@ impl Game {
 
     fn operate(block: &mut Block, operation: Operation) {
         use Operation::*;
-        //if let Some(ref mut block) = self.block {
-            match operation {
-                Left => block.left(),
-                Right => block.right(),
-                Down => block.down(),
-                LRot => block.rotate_left(),
-                RRot => block.rotate_right(),
-            };
-        //}
+        match operation {
+            Left => block.left(),
+            Right => block.right(),
+            Down => block.down(),
+            LRot => block.rotate_left(),
+            RRot => block.rotate_right(),
+        };
     }
 
     pub fn step(&mut self, input: Option<char>) {
@@ -244,6 +305,30 @@ impl Game {
                 }
             }
         }
+    }
+    // FIXME: block.down()に対してバインドして、updateも呼びたい、レンダーは外部で実行したい
+    pub fn drop(&mut self) {
+        let mut formatted = Field::format_field(&self.field.field);
+        if let Some(ref mut block) = self.block {
+            let prev_coord = block.coord.clone();
+            block.down();
+            if let Some(field_with_block) = self.field.arrange_with_block(&block) {
+                formatted = Field::format_field(&field_with_block);
+            } else {
+                block.coord = prev_coord; 
+                self.update();
+            }
+        }
+        Game::render(formatted);
+    }
+
+    fn update(&mut self) {
+        let block = self.block.as_ref().unwrap();
+        if let Some(field_with_block) = self.field.arrange_with_block(block) {
+            self.field.set(field_with_block);
+            self.field.update();
+        }
+        self.new_block();
     }
 
     fn render(formatted: String) {
@@ -268,11 +353,30 @@ pub fn show(field: &Field) {
     println!("{}", formatted);
 }
 
+use std::{thread, time};
+
+const CLOCK_TIME: Duration = time::Duration::from_millis(50);
 fn main() {
-    let field = Field::new(10, 22);
-    println!("{}", Field::format_field(&field.field));
-    let block = Block::new(BlockShape::I);
-    show_with_block(&field, &block);
+    let mut game = Game::new(10, 22);
+    game.new_block();
+    for _ in 0..100 {
+        game.drop();
+        thread::sleep(CLOCK_TIME);
+    }
+}
+
+#[test]
+fn load_with_str() {
+    let formatted = 
+"
+[]. . . . . []
+[]. . . . . []
+[]. . . []. []
+[]. . . . . []
+[][][][][][][]
+";
+    let field = Field::init_with_str(formatted);
+    print!("{}", Field::format_field(&field));
 }
 
 #[test]
@@ -296,12 +400,12 @@ fn render() {
 #[test]
 fn render_with_block() {
     let mut field = Field::new(5, 4);
-    let mut grid = field.field.clone();
     let block = Block::new(BlockShape::J);
-    grid[2][4] = true;
-    let rendered = Field::arrange_with_block(&grid, &block);
+    field.field[2][4] = true;
+    let rendered = field.arrange_with_block(&block);
     field.set(rendered.unwrap());
     let formatted = Field::format_field(&field.field);
+    print!("{}", formatted);
     assert_eq!(format!("\n{}", formatted),
 "
 [][]. . . . []
@@ -319,7 +423,7 @@ fn right() {
     let mut block = Block::new(BlockShape::J);
     field.field[2][4] = true;
     block.right();
-    let rendered = Field::arrange_with_block(&field.field, &block);
+    let rendered = field.arrange_with_block(&block);
     field.set(rendered.unwrap());
     let formatted = Field::format_field(&field.field);
     println!("{}", formatted);
