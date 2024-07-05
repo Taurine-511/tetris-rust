@@ -37,14 +37,15 @@ impl Distribution<BlockShape> for Standard {
 }
 
 pub struct Block {
-    coord: (usize, usize),
+    coord: (i8, i8),
+    coord_max: (i8, i8),
     rotate: usize,
     shape: Vec<Grid>,
 }
 
 impl Block {
     pub fn rotate_left(&mut self) { 
-        self.rotate -= 1;
+        self.rotate += 3;
         self.rotate %= 4;
     }
 
@@ -54,18 +55,18 @@ impl Block {
     }
 
     pub fn down(&mut self) {
-        self.coord.1 += 1
+        self.coord.1 = std::cmp::min(self.coord.1 + 1, self.coord_max.1);
     }
 
     pub fn left(&mut self) {
-        self.coord.0 -= 1;
+        self.coord.0 = std::cmp::max(self.coord.0 - 1, -2);
     }
 
     pub fn right(&mut self) {
-        self.coord.0 += 1;
+        self.coord.0 = std::cmp::min(self.coord.0 + 1, self.coord_max.0);
     }
 
-    pub fn new(shape_type: BlockShape) -> Self {
+    pub fn new(shape_type: BlockShape, coord_max: (i8, i8)) -> Self {
         let shape_0_1 = match shape_type {
             BlockShape::I => vec![
                 vec![0, 0, 0, 0],
@@ -108,6 +109,7 @@ impl Block {
             coord: (4, 0),
             rotate: 0,
             shape,
+            coord_max,
         }
     }
 
@@ -186,8 +188,8 @@ impl Field {
         let rows_block = block.shape[0][0].len();
         for y in 0..cols_block {
             for x in 0..rows_block {
-                let y_check = block.coord.1 + y;
-                let x_check = block.coord.0 + x;
+                let y_check = (block.coord.1 + y as i8) as usize;
+                let x_check = (block.coord.0 + x as i8) as usize;
                 if y_check >= output.len() || x_check >= output[0].len() {
                     continue;
                 }
@@ -205,8 +207,7 @@ impl Field {
     pub fn update(&mut self) {
         let mut queue: VecDeque<usize> = VecDeque::new();
         let field_len = self.field.len() - 1;
-
-        for y in 0..field_len {
+        for y in (0..field_len).rev() {
             if self.is_row_full(y) {
                 queue.push_back(y);
                 self.clear_row(y);
@@ -231,13 +232,11 @@ impl Field {
 
 
     fn format_field(field: &Grid) -> String {
-        let field_fmt = field.iter().map(|w_vec| {
-            let inside = w_vec.iter().map(|elem| {
-                if *elem { "[]" } else { ". " }
-            }).collect::<String>();
-            format!("{}\n", &inside)
-        }).collect::<String>();
-        field_fmt
+        field.iter().map(|w_vec| {
+            w_vec.iter().map(|elem| {
+                if *elem { "[]" } else { "  " }
+            }).collect::<String>()
+        }).collect::<Vec<String>>().join("\r\n")
     }
 }
 
@@ -252,19 +251,24 @@ enum Operation{
 pub struct Game {
     field: Field,
     block: Option<Block>,
+    last_drop_time: std::time::Instant,
+    drop_interval: std::time::Duration,
 }
 
 impl Game {
-    pub fn new(width: usize, height: usize) -> Self {
+    pub fn new(width: usize, height: usize, drop_interval: Duration) -> Self {
         Self {
             field: Field::new(width, height),
-            block: None,
+            block: None,            
+            last_drop_time: std::time::Instant::now(),
+            drop_interval,
         }
     }
 
     pub fn new_block(&mut self) {
         let shape: BlockShape = rand::random();
-        self.block = Some(Block::new(shape));
+        let coord_max = (self.field.field[0].len() as i8 , self.field.field.len() as i8);
+        self.block = Some(Block::new(shape, coord_max));
     }
 
     fn parse(input: Option<char>) -> Option<Operation> {
@@ -295,12 +299,14 @@ impl Game {
         if let Some(ref mut block) = self.block {
             let operation = Self::parse(input);
             if let Some(op) = operation {
+                let prev_rot = block.rotate.clone();
                 let prev_coord = block.coord.clone();
                 Game::operate(block, op);
                 if let Some(field_with_block) = self.field.arrange_with_block(&block) {
                     let formatted = Field::format_field(&field_with_block);
                     Game::render(formatted);
                 } else {
+                    block.rotate = prev_rot;
                     block.coord = prev_coord;
                 }
             }
@@ -310,19 +316,21 @@ impl Game {
     pub fn drop(&mut self) {
         let mut formatted = Field::format_field(&self.field.field);
         if let Some(ref mut block) = self.block {
+            let prev_rot = block.rotate.clone();
             let prev_coord = block.coord.clone();
             block.down();
             if let Some(field_with_block) = self.field.arrange_with_block(&block) {
                 formatted = Field::format_field(&field_with_block);
             } else {
+                block.rotate = prev_rot;
                 block.coord = prev_coord; 
-                self.update();
+                self.update_state();
             }
         }
         Game::render(formatted);
     }
 
-    fn update(&mut self) {
+    fn update_state(&mut self) {
         let block = self.block.as_ref().unwrap();
         if let Some(field_with_block) = self.field.arrange_with_block(block) {
             self.field.set(field_with_block);
@@ -331,12 +339,28 @@ impl Game {
         self.new_block();
     }
 
+    pub fn update(&mut self, input: Option<char>) {
+        let now = std::time::Instant::now();
+        
+        // ユーザー入力があれば処理
+        if let Some(_) = input {
+            self.step(input);
+        }
+        
+        // 一定時間経過したらドロップ
+        if now.duration_since(self.last_drop_time) >= self.drop_interval {
+            self.drop();
+            self.last_drop_time = now;
+        }
+    }
+
     fn render(formatted: String) {
-        // 画面をクリア
-        print!("{esc}c", esc = 27 as char);
-        // フォーマットされたフィールドを出力
+        execute!(
+            io::stdout(),
+            Clear(ClearType::All),
+            MoveTo(0, 0)
+        ).unwrap();
         print!("{}", formatted);
-        // 標準出力をフラッシュ
         io::stdout().flush().unwrap();
     }
 }
@@ -353,16 +377,44 @@ pub fn show(field: &Field) {
     println!("{}", formatted);
 }
 
-use std::{thread, time};
 
-const CLOCK_TIME: Duration = time::Duration::from_millis(50);
-fn main() {
-    let mut game = Game::new(10, 22);
+
+const CLOCK_TIME: Duration = Duration::from_millis(500);
+use std::{thread, time};
+use crossterm::event::{self, Event, KeyCode};
+use crossterm::terminal::{enable_raw_mode, disable_raw_mode};
+use crossterm::{
+    execute,
+    terminal::{Clear, ClearType},
+    cursor::MoveTo,
+};
+fn main() -> io::Result<()> {
+    enable_raw_mode()?;
+    let mut game = Game::new(10, 22, CLOCK_TIME);
     game.new_block();
-    for _ in 0..100 {
-        game.drop();
-        thread::sleep(CLOCK_TIME);
+
+    loop {
+        // 非ブロッキングでユーザー入力をチェック
+        let input = if event::poll(std::time::Duration::from_millis(0))? {
+            if let Event::Key(key_event) = event::read()? {
+                match key_event.code {
+                    KeyCode::Char('p') => break,
+                    KeyCode::Char(c) => Some(c),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        game.update(input);
+        
+        thread::sleep(time::Duration::from_millis(16)); // 約60FPS
     }
+    disable_raw_mode()?;
+    Ok(())
 }
 
 #[test]
@@ -400,7 +452,7 @@ fn render() {
 #[test]
 fn render_with_block() {
     let mut field = Field::new(5, 4);
-    let block = Block::new(BlockShape::J);
+    let block = Block::new(BlockShape::J, (22, 10));
     field.field[2][4] = true;
     let rendered = field.arrange_with_block(&block);
     field.set(rendered.unwrap());
@@ -420,7 +472,7 @@ fn render_with_block() {
 #[test]
 fn right() {
     let mut field = Field::new(5, 4);
-    let mut block = Block::new(BlockShape::J);
+    let mut block = Block::new(BlockShape::J, (22, 10));
     field.field[2][4] = true;
     block.right();
     let rendered = field.arrange_with_block(&block);
