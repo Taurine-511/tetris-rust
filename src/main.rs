@@ -306,7 +306,7 @@ impl Game {
             }
         }
     }
-
+    // FIXME: block.down()に対してバインドして、updateも呼びたい、レンダーは外部で実行したい
     pub fn drop(&mut self) {
         let mut formatted = Field::format_field(&self.field.field);
         if let Some(ref mut block) = self.block {
