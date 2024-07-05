@@ -1,4 +1,8 @@
-use std::io::{self, Write};
+use std::{io::{self, Write}, time::Duration};
+use rand::{
+    distributions::{Distribution, Standard},
+    Rng,
+};
 
 type Grid = Vec<Vec<bool>>; 
 pub struct Field {
@@ -15,6 +19,21 @@ pub enum BlockShape {
     J,
     L,
     T,
+}
+
+impl Distribution<BlockShape> for Standard {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> BlockShape {
+        use BlockShape::*;
+        match rng.gen_range(0..7) {
+            0 => I,
+            1 => O,
+            2 => S,
+            3 => Z,
+            4 => J,
+            5 => L,
+            _ => T,
+        }
+    }
 }
 
 pub struct Block {
@@ -201,7 +220,8 @@ impl Game {
     }
 
     pub fn new_block(&mut self) {
-        
+        let shape: BlockShape = rand::random();
+        self.block = Some(Block::new(shape));
     }
 
     fn parse(input: Option<char>) -> Option<Operation> {
@@ -268,11 +288,18 @@ pub fn show(field: &Field) {
     println!("{}", formatted);
 }
 
+use std::{thread, time};
+
+const CLOCK_TIME: Duration = time::Duration::from_millis(500);
 fn main() {
-    let field = Field::new(10, 22);
-    println!("{}", Field::format_field(&field.field));
-    let block = Block::new(BlockShape::I);
-    show_with_block(&field, &block);
+    let mut game = Game::new(10, 22);
+    game.new_block();
+    for _ in 0..5 {
+        game.step(Some('d'));
+        thread::sleep(CLOCK_TIME);
+        game.step(Some('s'));
+        thread::sleep(CLOCK_TIME);
+    }
 }
 
 #[test]
